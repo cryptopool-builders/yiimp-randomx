@@ -26,7 +26,7 @@
 using namespace std;
 
 #include "iniparser/src/iniparser.h"
-
+#include "randomx.h"
 #include "json.h"
 #include "util.h"
 
@@ -115,6 +115,7 @@ extern pthread_mutex_t g_job_create_mutex;
 
 extern volatile bool g_exiting;
 
+#include "randomx.h"
 #include "db.h"
 #include "object.h"
 #include "socket.h"

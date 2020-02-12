@@ -145,9 +145,8 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 	if(job->block_found) return;
 	if(job->deleted) return;
 
-	uint64_t hash_int = get_hash_difficulty(submitvalues->hash_bin);
-	uint64_t coin_target = decode_compact(templ->nbits);
-	if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL;
+        uint64_t hash_int = * (uint64_t *) &submitvalues->hash_bin[24];
+        uint64_t coin_target = decode_compact(templ->nbits) / 0x10000;
 
 	int block_size = YAAMP_SMALLBUFSIZE;
 	vector<string>::const_iterator i;
@@ -216,7 +215,9 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 		}
 	}
 
-	if(hash_int <= coin_target)
+        double coin_diff = target_to_diff(coin_target);
+        double share_diff = target_to_diff(hash_int);
+        if(share_diff > coin_diff)
 	{
 		char count_hex[8] = { 0 };
 		if (templ->txcount <= 252)
@@ -249,6 +250,8 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 			else
 				snprintf(block_hex, block_size, "%s", hex);
 		}
+
+                debuglog("debugblockhex: %s\n", block_hex);
 
 		bool b = coind_submit(coind, block_hex);
 		if(b)
@@ -389,7 +392,7 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	string_lower(nonce);
 
 	if (json_params->u.array.length == 6) {
-		if (strstr(g_stratum_algo, "phi")) {
+		if (strstr(g_stratum_algo, "randomx")) {
 			// lux optional field, smart contral root hashes (not mandatory on shares submit)
 			strncpy(extra, json_params->u.array.values[5]->u.string.ptr, 128);
 			string_lower(extra);
@@ -497,33 +500,23 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 		lyra2z_height = templ->height;
 	}
 
-	// minimum hash diff begins with 0000, for all...
-	uint8_t pfx = submitvalues.hash_bin[30] | submitvalues.hash_bin[31];
-	if(pfx) {
-		if (g_debuglog_hash) {
-			debuglog("Possible %s error, hash starts with %02x%02x%02x%02x\n", g_current_algo->name,
-				(int) submitvalues.hash_bin[31], (int) submitvalues.hash_bin[30],
-				(int) submitvalues.hash_bin[29], (int) submitvalues.hash_bin[28]);
-		}
-		client_submit_error(client, job, 25, "Invalid share", extranonce2, ntime, nonce);
-		return true;
-	}
+        uint64_t hash_int = * (uint64_t *) &submitvalues.hash_bin[24];
+        uint64_t user_target = share_to_target(client->difficulty_actual) * g_current_algo->diff_multiplier;
 
-	uint64_t hash_int = get_hash_difficulty(submitvalues.hash_bin);
-	uint64_t user_target = diff_to_target(client->difficulty_actual);
-	uint64_t coin_target = decode_compact(templ->nbits);
-	if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL;
+        uint64_t coin_target = decode_compact(templ->nbits);
+        if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL; // under decode_compact min diff
+        double coin_diff = target_to_diff(coin_target);
+        double share_diff = target_to_diff(hash_int);
 
-	if (g_debuglog_hash) {
-		debuglog("%016llx actual\n", hash_int);
-		debuglog("%016llx target\n", user_target);
-		debuglog("%016llx coin\n", coin_target);
-	}
-	if(hash_int > user_target && hash_int > coin_target)
-	{
-		client_submit_error(client, job, 26, "Low difficulty share", extranonce2, ntime, nonce);
-		return true;
-	}
+        debuglog("\n");
+        debuglog("hash %016llx \n", hash_int);
+        debuglog("shar %016llx \n", user_target);
+
+        if(hash_int > user_target)
+        {
+                client_submit_error(client, job, 26, "Low difficulty share", extranonce2, ntime, nonce);
+                return true;
+        }
 
 	if(job->coind)
 		client_do_submit(client, job, &submitvalues, extranonce2, ntime, nonce, vote);
@@ -539,7 +532,6 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 		if (!client_ask_stats(client)) client->stats = false;
 	}
 
-	double share_diff = diff_to_target(hash_int);
 //	if (g_current_algo->diff_multiplier != 0) {
 //		share_diff = share_diff / g_current_algo->diff_multiplier;
 //	}
